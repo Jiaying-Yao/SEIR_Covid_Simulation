@@ -1,0 +1,119 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+
+```{r}
+library(readxl)
+library(dplyr)
+library(deSolve)
+```
+```{r}
+COVIDData <- read_excel("../data/COVIDdata.xlsm")
+actual_new_infection = COVIDData$`Newly Positive (Confirmed Infections)`
+actual_new_infection <- actual_new_infection[!is.na(actual_new_infection)]
+actual_new_infection
+```
+Functions
+```{r}
+SEIRmodel <- function(times, state, parameters) {
+  with (as.list(c(state, parameters)), {
+    dS <- - beta * I * S
+    dE <- beta * I * S - theta * E
+    dI <- theta * E - gamma * I
+    dR <- gamma * I
+#    print(dI)
+    return(list(c(dS, dE, dI, dR)))
+  })
+}
+
+predict <- function(beta = 0.000002565, gamma = 0.8, theta = 0.3, S0 = 1886876, E0 = 5000, I0 = 1033, R0 = 147091, 
+                    tmax = 21) {
+  times <- seq(0, tmax, 1)
+  
+  parameters = c(beta = beta, gamma = gamma, theta = theta)
+  
+  iniState <- c(S = S0, E = E0, I = I0, R = R0)
+  
+  yhat <- as.data.frame(ode(iniState, times, SEIRmodel, parameters))
+  yhat$`pred_CumulativeInfections` <- yhat$I + yhat$R
+  
+  yhat <- yhat %>%
+    arrange(time) %>%
+    mutate(`New Infected` = `pred_CumulativeInfections` - lag(`pred_CumulativeInfections`, 
+                                                              default =first(`pred_CumulativeInfections`)))
+  
+#  yhat$`New Infected` <- theta * yhat$E4
+  
+  return(yhat)
+}
+
+calc_RMSE <- function(pred_new_infection, actual_new_infection = actual_new_infection){
+        sqrt(mean((pred_new_infection - actual_new_infection)^2))
+}
+
+define_startingWeek <- function(SEIR_result, new_infect_threshold = 400){
+  for (n in 1:nrow(SEIR_result)){
+    if (SEIR_result[n,7] >= new_infect_threshold){
+      return(n)
+    }
+  }
+}
+```
+
+Tune parameters
+```{r}
+#result <- predict(beta = 0.000002565, gamma = 0.8, theta = 0.3, S0 = 1886876, E0 = 5000, I0 = 1033, R0 = 147091,tmax = 20)#106005.3
+#result <- predict(beta = 0.0005, gamma = 0.95, theta = 0.003, S0 = 2040000, E0 = 2000, I0 = 0, R0 = 0,tmax = 100)
+min_rmse = 1000000
+best_beta = 0.00008
+best_gamma = 0.95
+best_theta = 0.001
+best_e0 <- 3000
+
+for (i in seq(from = 0.0001, to = 0.0002, by = 0.00001)){
+        for (j in seq(from = 0.003, to = 0.006, by = 0.001)){
+          for (k in seq(from = 1000, to = 5000, by = 100)){
+            
+              result <- predict(beta = i, gamma = 0.95, theta = j, S0 = 2040000, E0 = k, I0 = 0, R0 = 0,tmax = 100)
+              pred_new_infection <- result$`New Infected`
+              #rmse <- calc_RMSE(pred_new_infection = pred_new_infection, actual_new_infection = actual_new_infection)
+              pred_new_infection <- result$`New Infected`[2:22]
+              rmse <- calc_RMSE(pred_new_infection = pred_new_infection, actual_new_infection = actual_new_infection)
+              max = max(pred_new_infection)
+              if (rmse < min_rmse){
+                min_rmse <- rmse
+                best_beta <- i
+                best_theta <- j
+                best_e0 <- k
+              
+            }
+          }
+          #cat("beta = ", i, " theta = ", j)
+          #print('')
+          #cat('Max point: ', max, "at", which.max(pred_new_infection))
+          #print('')
+          #cat('RMSE: ', rmse, 'staring from week ', starting)
+          #print('')
+          #print('-----------------------------------------------------')
+        }
+}
+
+cat("best beta = ", best_beta, " best theta = ", best_theta, ' best gamma = 0.95', ' best E0 = ', best_e0)
+#cat('Max point: ', max, "at", which.max(pred_new_infection))
+print('')
+cat('best RMSE: ', min_rmse)
+```
+
+
+```{r}
+#result <- predict(beta = 0.0002, gamma = 0.95, theta = 0.005, S0 = 2040000, E0 = 3000, I0 = 0, R0 = 0,tmax = 200)
+best_result <- predict(beta = best_beta, gamma = 0.95, theta = best_theta, S0 = 2040000, E0 = best_e0, I0 = 0, R0 = 0,tmax = 21)
+#starting <- define_startingWeek(result, new_infect_threshold = 100)
+pred_new_infection <- best_result$`New Infected`[2:22]
+calc_RMSE(pred_new_infection = pred_new_infection, actual_new_infection = actual_new_infection)
+best_result
+```
+
